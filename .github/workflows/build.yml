@@ -20,29 +20,28 @@ jobs:
     - name: 安装依赖
       run: |
         python -m pip install --upgrade pip
-        pip install paddlepaddle==2.6.1 paddleocr==2.8.1 openpyxl Pillow pyinstaller
-      shell: cmd
+        pip install rapidocr-onnxruntime openpyxl Pillow pyinstaller
 
     - name: 验证导入
-      run: python -c "import paddleocr; import openpyxl; print('All imports OK')"
-      shell: cmd
+      run: python -c "from rapidocr_onnxruntime import RapidOCR; import openpyxl; print('✅ 所有库导入成功')"
 
-    - name: 打包（onedir模式，更稳定）
+    - name: 打包为单文件 EXE
       run: |
-        pyinstaller --onedir --noconsole --name "标本OCR填表工具" `
-          --hidden-import paddleocr `
-          --hidden-import paddle `
-          --hidden-import openpyxl `
-          --hidden-import PIL.ImageTk `
-          main.py
-      shell: cmd
+        pyinstaller --onefile --noconsole --name "标本OCR填表工具" main.py
 
-    - name: 制作压缩包
+    - name: 检查构建产物
       run: |
-        powershell Compress-Archive -Path dist\标本OCR填表工具 -DestinationPath 标本OCR填表工具.zip -Force
+        $f = "dist/标本OCR填表工具.exe"
+        if (Test-Path $f) {
+          $s = [math]::Round((Get-Item $f).Length / 1MB, 1)
+          Write-Host "✅ 构建成功！EXE 大小: $s MB"
+        } else {
+          Write-Host "❌ 产物未找到"
+          exit 1
+        }
 
-    - name: 上传构建产物
+    - name: 上传 EXE
       uses: actions/upload-artifact@v4
       with:
         name: 标本OCR填表工具
-        path: 标本OCR填表工具.zip
+        path: dist/标本OCR填表工具.exe
