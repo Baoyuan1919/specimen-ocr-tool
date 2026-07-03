@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-标本照片 → Excel 自动填表 v2.1
+标本照片 → Excel 自动填表 v2.9
 - 字段自定义增删（设置中自由增减，也可从 Excel 表头同步）
 - 系统托盘后台运行（关闭窗口最小化到托盘区）
 - 文件夹自动监听（检测新图片自动识别填表）
@@ -27,6 +27,11 @@ DEFAULT_FIELDS = [
     "经度", "纬度", "海拔",
     "习性", "生态环境", "高度"
 ]
+
+VERSION = "2.9"
+APP_NAME = "标本OCR填表工具"
+DEVELOPER = "Baoyuan1919"
+COPYRIGHT_YEAR = "2026"
 
 SUPPORTED_EXT = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif', '.webp'}
 CONFIG_DIR = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "标本OCR工具"
@@ -514,6 +519,9 @@ class App:
         ttk.Button(bf, text="📊 统计", width=8,
                    command=self._show_stats).pack(side=tk.LEFT, padx=3)
 
+        ttk.Button(bf, text="ℹ️ 关于", width=8,
+                   command=self._show_about).pack(side=tk.LEFT, padx=3)
+
     # ─── 日志 / 刷新 ───
     def _wl(self, msg, tag="i"):
         self.log.config(state=tk.NORMAL)
@@ -884,6 +892,42 @@ class App:
         self.run_btn.config(state=tk.NORMAL, text="🚀 手动识别并填表")
         self.pl.config(text="✅ 完成")
         self._save_config()
+
+    def _show_about(self):
+        """显示关于信息"""
+        win = tk.Toplevel(self.root)
+        win.title(f"关于 {APP_NAME}")
+        win.geometry("380x250")
+        win.resizable(False, False)
+        win.transient(self.root)
+        win.grab_set()
+
+        frame = ttk.Frame(win, padding=24)
+        frame.pack(fill=tk.BOTH, expand=True)
+
+        ttk.Label(frame, text=APP_NAME,
+                  font=("微软雅黑", 14, "bold")).pack(pady=(0, 8))
+        ttk.Label(frame, text=f"版本：v{VERSION}",
+                  font=("微软雅黑", 10)).pack(pady=2)
+        separator = ttk.Separator(frame, orient="horizontal")
+        separator.pack(fill=tk.X, pady=10)
+
+        desc = (
+            "标本照片OCR识别 → Excel自动填表工具\n"
+            "支持字段自定义、文件夹监听、\n"
+            "图片按采集号自动重命名"
+        )
+        ttk.Label(frame, text=desc,
+                  font=("微软雅黑", 9), justify=tk.CENTER,
+                  foreground="#555").pack(pady=4)
+
+        ttk.Label(frame,
+                  text=f"© {COPYRIGHT_YEAR} {DEVELOPER}",
+                  font=("微软雅黑", 8),
+                  foreground="gray").pack(pady=(10, 0))
+
+        ttk.Button(frame, text="确定", width=10,
+                   command=win.destroy).pack(pady=(12, 0))
 
     def _show_stats(self):
         """显示统计面板"""
