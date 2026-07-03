@@ -8,7 +8,8 @@
 - 基于坐标的字段匹配（完美适配表格排版照片）
 """
 
-import os, re, sys, json, threading, time
+import os, re, sys, json, threading, time, csv
+from datetime import date, datetime
 from pathlib import Path
 
 import openpyxl
@@ -30,6 +31,7 @@ DEFAULT_FIELDS = [
 SUPPORTED_EXT = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif', '.webp'}
 CONFIG_DIR = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "标本OCR工具"
 CONFIG_FILE = CONFIG_DIR / "config.json"
+LOG_FILE = CONFIG_DIR / "操作日志.csv"
 
 
 # ─── OCR 引擎 ───
@@ -221,6 +223,72 @@ def write_row(excel_path, row_data, field_order, row_num):
     wb.save(excel_path)
 
 
+def write_operation_log(excel_path, total, succeed, rename_count, fields_count):
+    """写入操作日志，每天一条累计记录"""
+    try:
+        today = date.today().isoformat()
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        rows = []
+        # 读取已有日志
+        if LOG_FILE.exists():
+            try:
+                with open(LOG_FILE, 'r', encoding='utf-8', newline='') as f:
+                    reader = csv.DictReader(f)
+                    for r in reader:
+                        rows.append(r)
+            except Exception:
+                pass
+
+        # 找今天的记录
+        today_row = None
+        for r in rows:
+            if r.get("日期") == today:
+                today_row = r
+                break
+
+        if today_row:
+            # 更新今天的记录
+            prev_total = int(today_row.get("累计标本数", 0))
+            # 重新统计 Excel 中的实际行数
+            actual = count_data_rows(excel_path) if os.path.isfile(excel_path) else succeed
+            today_row["累计标本数"] = str(actual)
+            today_row["最后操作"] = now
+            # 更新当日新增（如果 Excel 统计 > 之前累计，差额即为新增）
+            prev_day_total = int(today_row.get("当日新增", 0))
+            today_row["当日新增"] = str(prev_day_total + succeed)
+            today_row["成功数"] = str(int(today_row.get("成功数", 0)) + succeed)
+            today_row["失败数"] = str(int(today_row.get("失败数", 0)) + (total - succeed))
+            log_fn = today_row.get("使用的Excel", "")
+            if excel_path and excel_path not in log_fn:
+                log_fn = log_fn + "; " + excel_path if log_fn else excel_path
+            today_row["使用的Excel"] = log_fn
+        else:
+            # 新建今天的记录
+            actual = succeed
+            if os.path.isfile(excel_path):
+                actual = count_data_rows(excel_path)
+            rows.append({
+                "日期": today,
+                "累计标本数": str(actual),
+                "当日新增": str(succeed),
+                "成功数": str(succeed),
+                "失败数": str(total - succeed),
+                "重命名数": str(rename_count),
+                "字段数": str(fields_count),
+                "使用的Excel": excel_path or "",
+                "最后操作": now
+            })
+
+        # 写回
+        headers = ["日期","累计标本数","当日新增","成功数","失败数","重命名数","字段数","使用的Excel","最后操作"]
+        with open(LOG_FILE, 'w', encoding='utf-8-sig', newline='') as f:
+            writer = csv.DictWriter(f, fieldnames=headers)
+            writer.writeheader()
+            writer.writerows(rows)
+    except Exception:
+        pass
+
+
 def count_data_rows(excel_path):
     wb = openpyxl.load_workbook(excel_path)
     ws = wb.active
@@ -378,6 +446,9 @@ class App:
             bf, text="— 最小化到托盘", width=14,
             command=self._minimize_to_tray)
         self.tray_btn.pack(side=tk.LEFT, padx=3)
+
+        ttk.Button(bf, text="📊 统计", width=8,
+                   command=self._show_stats).pack(side=tk.LEFT, padx=3)
 
     # ─── 日志 / 刷新 ───
     def _wl(self, msg, tag="i"):
@@ -686,6 +757,7 @@ class App:
 
                 base_rows = count_data_rows(e)
                 succeed = 0
+                rename_count = 0
 
                 for idx, img in enumerate(images):
                     name = img.name
@@ -708,7 +780,6 @@ class App:
                         if self.rename_var.get():
                             caihao = row_data.get("采集号", "") or ""
                             if caihao and caihao != "（未识别）":
-                                # 清理非法文件名字符
                                 safe = re.sub(r'[\\/:*?"<>|]', '_', caihao).strip()
                                 if safe:
                                     ext = img.suffix.lower()
@@ -718,6 +789,7 @@ class App:
                                         lc(f"   ⚠️ {new_name} 已存在，跳过重命名", "w")
                                     else:
                                         img.rename(new_path)
+                                        rename_count += 1
                                         lc(f"   📎 已重命名为 {new_name}", "ok")
                     except Exception as ex:
                         lc(f"   ❌ 处理失败: {ex}", "err")
@@ -725,6 +797,8 @@ class App:
                 lc(f"\n{'=' * 45}", "b")
                 lc(f"✅ 完成！共 {total} 张图片，"
                    f"成功写入 {succeed} 行", "ok")
+                # 记录操作日志
+                write_operation_log(e, total, succeed, rename_count, len(fields))
             except Exception as ex:
                 lc(f"❌ 运行出错: {ex}", "err")
             finally:
@@ -737,6 +811,85 @@ class App:
         self.run_btn.config(state=tk.NORMAL, text="🚀 手动识别并填表")
         self.pl.config(text="✅ 完成")
         self._save_config()
+
+    def _show_stats(self):
+        """显示统计面板"""
+        win = tk.Toplevel(self.root)
+        win.title("📊 录入统计")
+        win.geometry("600x450")
+        win.transient(self.root)
+
+        ttk.Label(win, text="标本录入统计",
+                  font=('微软雅黑', 14, 'bold')).pack(pady=(10, 4))
+
+        # 从 Excel 实时统计
+        e = self.excel_path.get()
+        excel_count = 0
+        if e and os.path.isfile(e):
+            excel_count = count_data_rows(e)
+
+        # 从日志读取历史
+        log_rows = []
+        if LOG_FILE.exists():
+            try:
+                with open(LOG_FILE, 'r', encoding='utf-8', newline='') as f:
+                    reader = csv.DictReader(f)
+                    for r in reader:
+                        log_rows.append(r)
+            except Exception:
+                pass
+
+        # 顶部：总体概览
+        summary = ttk.LabelFrame(win, text="总体概览", padding=8)
+        summary.pack(fill=tk.X, padx=12, pady=4)
+
+        # Excel 实际行数
+        ttk.Label(summary, text=f"当前 Excel 标本数：{excel_count}",
+                  font=('微软雅黑', 11)).pack(anchor=tk.W)
+
+        if log_rows:
+            total_all = sum(int(r.get("累计标本数", 0)) for r in log_rows)
+            total_ok = sum(int(r.get("成功数", 0)) for r in log_rows)
+            total_fail = sum(int(r.get("失败数", 0)) for r in log_rows)
+            total_rename = sum(int(r.get("重命名数", 0)) for r in log_rows)
+            ttk.Label(summary,
+                      text=f"操作总成功：{total_ok} 次  失败：{total_fail} 次"
+                      ).pack(anchor=tk.W)
+            ttk.Label(summary,
+                      text=f"累计重命名：{total_rename} 张"
+                      ).pack(anchor=tk.W)
+            ttk.Label(summary,
+                      text=f"日志天数：{len(log_rows)} 天"
+                      ).pack(anchor=tk.W)
+
+        # 日志列表
+        f_log = ttk.LabelFrame(win, text="操作日志", padding=6)
+        f_log.pack(fill=tk.BOTH, expand=True, padx=12, pady=4)
+
+        columns = ("日期", "累计标本数", "当日新增", "成功", "失败", "重命名", "最后操作")
+        tree = ttk.Treeview(f_log, columns=columns, show="headings", height=8)
+        for col in columns:
+            tree.heading(col, text=col)
+            tree.column(col, width=80 if col in ("日期","累计标本数","当日新增","成功","失败","重命名") else 160)
+        tree.pack(fill=tk.BOTH, expand=True)
+
+        # 从新到旧显示
+        for r in reversed(log_rows):
+            tree.insert("", "end", values=(
+                r.get("日期",""),
+                r.get("累计标本数","0"),
+                r.get("当日新增","0"),
+                r.get("成功数","0"),
+                r.get("失败数","0"),
+                r.get("重命名数","0"),
+                r.get("最后操作","")
+            ))
+
+        if not log_rows:
+            ttk.Label(f_log, text="暂无操作日志", foreground="gray").pack(pady=20)
+
+        ttk.Button(win, text="关闭", width=10,
+                   command=win.destroy).pack(pady=6)
 
     def _quit(self):
         self._save_config()
