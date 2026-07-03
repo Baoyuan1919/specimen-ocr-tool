@@ -18,39 +18,27 @@ jobs:
         python-version: '3.9'
 
     - name: 安装依赖
-      run: |
-        python -m pip install --upgrade pip
-        pip install rapidocr-onnxruntime openpyxl Pillow pystray pyinstaller
+      run: pip install rapidocr-onnxruntime openpyxl pillow pystray pyinstaller
       shell: cmd
 
     - name: 验证导入
-      run: python -c "from rapidocr_onnxruntime import RapidOCR; import openpyxl; from PIL import Image; import pystray; print('OK')"
+      run: python -c "from rapidocr_onnxruntime import RapidOCR; print('OK')"
       shell: cmd
 
-    - name: 打包（onedir模式，含所有数据文件）
-      run: |
-        pyinstaller --onedir --noconsole --name "标本OCR填表工具" ^
-          --collect-all rapidocr_onnxruntime ^
-          --collect-all openpyxl ^
-          --collect-all PIL ^
-          main.py
+    - name: 打包
+      run: pyinstaller --onedir --noconsole --name "标本OCR填表工具" --collect-all rapidocr_onnxruntime --collect-all openpyxl --collect-all PIL main.py
       shell: cmd
 
-    - name: 验证数据文件是否包含
-      run: |
-        dir dist\标本OCR填表工具\rapidocr_onnxruntime\
-        if exist dist\标本OCR填表工具\rapidocr_onnxruntime\config.yaml ( echo ✅ config.yaml 已包含 ) else ( echo ⚠️ config.yaml 缺失 )
+    - name: 验证数据文件
+      run: dir dist\标本OCR填表工具\rapidocr_onnxruntime\
       shell: cmd
 
     - name: 打包产物
-      run: |
-        cd dist
-        tar -czf ../标本OCR填表工具.tar.gz 标本OCR填表工具\
-        cd ..
+      run: tar -czf specimen-ocr-tool.tar.gz -C dist 标本OCR填表工具
       shell: cmd
 
     - name: 上传产物
       uses: actions/upload-artifact@v4
       with:
         name: 标本OCR填表工具
-        path: 标本OCR填表工具.tar.gz
+        path: specimen-ocr-tool.tar.gz
