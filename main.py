@@ -81,27 +81,50 @@ _STRICT_FIELDS = {'茎', '叶', '花', '果', '根', '皮', '枝', '芽'}
 
 
 def _is_field_match(field, txt):
-    """判断 txt 是否匹配字段名 field。
+    """判断 OCR 文本 txt 是否匹配用户设置的字段名 field。
+
     规则：
-    - 白名单中的单字字段（茎/叶/花/果等）：必须精确匹配（或紧跟冒号）
-    - 其他字段（包括单字如 科/属）：支持前缀匹配（科→科名）
+    1. 精确匹配总是优先
+    2. 单字字段（茎/叶/花/果等）：
+       - 如果 OCR 文本含括号（如「枝（茎）」），检查括号内是否含字段名
+       - 不允许 OCR 文本以字段名开头但却是长内容（如「茎生叶」不是 field「茎」）
+    3. 多字字段：如果短 OCR 文本（≤3字符）是字段名的子串则匹配（如「果」→「果实」）
+    4. 其他字段（科/属/采集号等）：支持前缀匹配（科→科名）
     """
     t = txt.strip('：: ')
     if not t:
         return False
     # 如果有冒号，取冒号前的内容
     txt_before_colon = txt.split('：')[0].split(':')[0].strip() if '：' in txt or ':' in txt else None
+    compare = txt_before_colon if txt_before_colon else t
 
+    # 规则1：精确匹配
+    if compare == field:
+        return True
+
+    # 规则2：单字字段特殊处理
     if field in _STRICT_FIELDS:
-        # 精确匹配白名单字段
-        if txt_before_colon:
-            return txt_before_colon == field
-        return t == field
-    else:
-        # 其他字段：支持前缀匹配
-        if txt_before_colon:
-            return txt_before_colon.startswith(field) or txt_before_colon == field
-        return t.startswith(field) or t == field
+        # 含括号的短文本（如「枝（茎）」），查括号内是否含字段名
+        if '（' in txt and '）' in txt:
+            paren_content = txt[txt.find('（') + 1:txt.find('）')]
+            if field in paren_content:
+                return True
+        # 字段名出现在文本末尾（如「花果」→字段「果」）但没有内容描述特征
+        if 2 <= len(compare) <= 4:
+            # 短文本且字段在末尾
+            if compare.endswith(field) and not any(k in compare for k in ['生', '形', '状', '色', '毛']):
+                return True
+        return False
+
+    if len(field) >= 2 and len(compare) <= 3 and len(compare) >= 1:
+        # 规则3：短 OCR 文本是字段名的子串（「果」→「果实」）
+        if compare in field or field in compare:
+            return True
+
+    # 规则4：其他字段前缀匹配
+    if txt_before_colon:
+        return txt_before_colon.startswith(field) or txt_before_colon == field
+    return t.startswith(field) or t == field
 
 
 def parse_fields(ocr_items, raw_texts, fields):
