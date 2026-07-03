@@ -291,6 +291,19 @@ class App:
         ttk.Label(ft, text="增删改字段；可从 Excel 表头同步",
                   foreground="gray").pack(side=tk.LEFT, padx=8)
 
+        # ── 重命名开关 ──
+        f_rename = ttk.Frame(m)
+        f_rename.pack(fill=tk.X, pady=(0, 4))
+        self.rename_var = tk.BooleanVar(value=True)
+        self.rename_cb = ttk.Checkbutton(
+            f_rename, text="按采集号重命名图片",
+            variable=self.rename_var,
+            onvalue=True, offvalue=False)
+        self.rename_cb.pack(side=tk.LEFT)
+        ttk.Label(f_rename,
+                  text="处理后将图片重命名为「采集号+.jpg」格式",
+                  foreground="gray").pack(side=tk.LEFT, padx=8)
+
         # ── 图片文件夹 ──
         f1 = ttk.LabelFrame(m, text="📁 图片文件夹（按文件名排序处理）", padding=8)
         f1.pack(fill=tk.X, pady=3)
@@ -691,6 +704,21 @@ class App:
                         write_row(e, row_data, fields, row_num)
                         succeed += 1
                         lc(f"   ✅ 已写入 → 行{row_num}", "ok")
+                        # 按采集号重命名图片
+                        if self.rename_var.get():
+                            caihao = row_data.get("采集号", "") or ""
+                            if caihao and caihao != "（未识别）":
+                                # 清理非法文件名字符
+                                safe = re.sub(r'[\\/:*?"<>|]', '_', caihao).strip()
+                                if safe:
+                                    ext = img.suffix.lower()
+                                    new_name = f"{safe}{ext}"
+                                    new_path = img.parent / new_name
+                                    if new_path.exists():
+                                        lc(f"   ⚠️ {new_name} 已存在，跳过重命名", "w")
+                                    else:
+                                        img.rename(new_path)
+                                        lc(f"   📎 已重命名为 {new_name}", "ok")
                     except Exception as ex:
                         lc(f"   ❌ 处理失败: {ex}", "err")
 
