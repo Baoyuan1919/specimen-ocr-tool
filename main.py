@@ -130,14 +130,12 @@ def parse_fields(ocr_items, raw_texts, fields):
                     used_positions[field] = (x, y)
                     break
 
-        # ── 策略2：字段名右侧找值（表格排版） ──
+        # ── 策略2：字段名右侧或下方找值（表格+标签排版） ──
         if not val:
-            # 遍历每个字段名出现位置，找右侧第一个有效值
             for txt, fx, fy, fbw in field_matches:
                 if field in used_positions:
                     continue
                 right_edge = fx + fbw
-                # 自适应行高容差：取字段名高度的一半 + 20px
                 candidates = []
                 for vt, vx, vy, vbw in ocr_items:
                     t_stripped = vt.strip('：: ')
@@ -152,19 +150,23 @@ def parse_fields(ocr_items, raw_texts, fields):
                             break
                     if skip:
                         continue
-                    # 同一水平区域（容差 50px，适应不同大小标签）
+                    # A) 右侧匹配（同行水平带）
                     if abs(vy - fy) <= 50:
                         dx = vx - right_edge
-                        if -5 < dx < 600:  # 在右侧附近
-                            candidates.append((dx, vt))
+                        if -5 < dx < 600:
+                            candidates.append((1, dx, vt))  # 优先1：右侧
+                    # B) 下方匹配（下一行，垂直偏移 20~100px）
+                    dy = vy - fy
+                    if 20 < dy < 100:
+                        # 也要求水平位置在字段名附近（±150px）
+                        if abs(vx - fx) < 150:
+                            candidates.append((2, dy, vt))  # 优先2：下方
 
                 if candidates:
-                    candidates.sort(key=lambda c: c[0])
-                    raw_val = candidates[0][1].strip()
-                    # 截断过长或混入其他字段名的值
+                    candidates.sort(key=lambda c: (c[0], c[1]))  # 先按方向优先级，再按距离
+                    raw_val = candidates[0][2].strip()
                     raw_val = raw_val.split('\n')[0].strip()
                     raw_val = raw_val.rstrip('，。.;,;）)')
-                    # 如果值中还包含其他字段名，截断
                     for f2 in fields:
                         if f2 == field:
                             continue
@@ -783,14 +785,17 @@ class App:
                                 safe = re.sub(r'[\\/:*?"<>|]', '_', caihao).strip()
                                 if safe:
                                     ext = img.suffix.lower()
+                                    # 处理重复采集号：_01, _02 递增
                                     new_name = f"{safe}{ext}"
                                     new_path = img.parent / new_name
-                                    if new_path.exists():
-                                        lc(f"   ⚠️ {new_name} 已存在，跳过重命名", "w")
-                                    else:
-                                        img.rename(new_path)
-                                        rename_count += 1
-                                        lc(f"   📎 已重命名为 {new_name}", "ok")
+                                    counter = 1
+                                    while new_path.exists():
+                                        new_name = f"{safe}_{counter:02d}{ext}"
+                                        new_path = img.parent / new_name
+                                        counter += 1
+                                    img.rename(new_path)
+                                    rename_count += 1
+                                    lc(f"   📎 已重命名为 {new_name}", "ok")
                     except Exception as ex:
                         lc(f"   ❌ 处理失败: {ex}", "err")
 
