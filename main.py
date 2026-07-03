@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-标本照片 → Excel 自动填表 v2.0
+标本照片 → Excel 自动填表 v2.1
 - 字段自定义增删（设置中自由增减，也可从 Excel 表头同步）
 - 系统托盘后台运行（关闭窗口最小化到托盘区）
 - 文件夹自动监听（检测新图片自动识别填表）
+- 基于坐标的字段匹配（完美适配表格排版照片）
 """
 
 import os, re, sys, json, threading, time
@@ -43,33 +44,131 @@ def get_ocr():
 def is_img(path):
     return Path(path).suffix.lower() in SUPPORTED_EXT
 
+
 def ocr_image(img_path):
+    """
+    OCR识别，返回 (items, raw_texts)
+    items: [(text, x_center, y_center, box_width), ...] 按位置排序
+    raw_texts: [text, ...] 纯文本列表（旧版兼容）
+    """
     ocr = get_ocr()
     result, _ = ocr(str(img_path))
-    texts = []
+    items = []
+    raw_texts = []
     if result:
         for box in result:
             txt = box[1].strip()
-            if txt:
-                texts.append(txt)
-    return texts
+            if not txt:
+                continue
+            raw_texts.append(txt)
+            coords = box[0]  # [[x1,y1],[x2,y2],[x3,y3],[x4,y4]]
+            xs = [p[0] for p in coords]
+            ys = [p[1] for p in coords]
+            x_center = sum(xs) / 4
+            y_center = sum(ys) / 4
+            box_w = max(xs) - min(xs)
+            items.append((txt, x_center, y_center, box_w))
+    # 按垂直位置分组排序，同行的按水平排序
+    # 用 y 坐标的 20px 作为"同行的容差"
+    items.sort(key=lambda it: (round(it[2] / 20) * 20, it[1]))
+    return items, raw_texts
 
-def parse_fields(texts, fields):
-    full = "\n".join(texts)
+
+def parse_fields(ocr_items, raw_texts, fields):
+    """
+    基于坐标位置的字段匹配，配合正则回退。
+    两种模式：
+    A) 同水平带右侧匹配（表格排版：「字段名」左 →「值」右）
+    B) 同一行冒号分割（常规排版：「字段名：值」）
+    C) 全文本正则回退
+    """
     result = {}
     for field in fields:
         val = ""
-        m = re.search(re.escape(field) + r'[\s]*[:：]\s*([^\n]{1,200})', full)
-        if m:
-            v = m.group(1).strip().rstrip('，。.;,;）)')
-            if v: val = v
-        else:
-            m = re.search(re.escape(field) + r'[\t ]{1,4}([^\s]{1,100})', full)
+
+        # ─── A) 坐标匹配：找字段名右侧最近的内容 ───
+        field_y = None
+        field_right_edge = None
+        field_txt = None
+
+        for txt, x, y, bw in ocr_items:
+            t = txt.strip('：: ')
+            if t == field:
+                field_y = y
+                field_right_edge = x + bw
+                field_txt = txt
+                break
+
+        if field_y is not None:
+            # 检查字段名本身是否已包含值（如「采集号：629022105203」）
+            if '：' in field_txt:
+                parts = field_txt.split('：', 1)
+                if len(parts) > 1 and parts[1].strip():
+                    val = parts[1].strip()
+                    val = val.rstrip('，。.;,;）)')
+            elif ':' in field_txt:
+                parts = field_txt.split(':', 1)
+                if len(parts) > 1 and parts[1].strip():
+                    val = parts[1].strip()
+                    val = val.rstrip('，。.;,;）)')
+
+            if not val:
+                # 在右侧同一水平带找值
+                candidates = []
+                for txt, x, y, bw in ocr_items:
+                    t = t2 = txt.strip('：: ')
+                    # 跳过字段名自己
+                    if t == field:
+                        if abs(y - field_y) < 30:
+                            continue
+                    # 容差 40px 水平带，在字段名右侧 5~500px 内
+                    if abs(y - field_y) < 40:
+                        dx = x - (field_right_edge - 10)
+                        if 0 < dx < 500:
+                            candidates.append((dx, txt))
+
+                candidates.sort(key=lambda c: c[0])
+                if candidates:
+                    raw_val = candidates[0][1].strip()
+                    # 如果取到的值包含换行或过长，截断
+                    val = raw_val.split('\n')[0].split('  ')[0].strip()
+                    val = val.rstrip('，。.;,;）)')
+
+        # ─── B) 正则匹配（同一行冒号格式） ───
+        if not val:
+            for txt, x, y, bw in ocr_items:
+                pattern = re.escape(field) + r'[\s]*[:：]\s*([^\n]{1,200})'
+                m = re.search(pattern, txt)
+                if m:
+                    v = m.group(1).strip().rstrip('，。.;,;）)')
+                    if v:
+                        val = v
+                        break
+
+        # ─── C) 全文本正则回退 ───
+        if not val:
+            full = '\n'.join(raw_texts)
+            m = re.search(re.escape(field) + r'[\s]*[:：]\s*([^\n]{1,200})', full)
             if m:
                 v = m.group(1).strip().rstrip('，。.;,;）)')
-                if v: val = v
+                if v:
+                    val = v
+
+        # 清理：防止抓取了相邻字段名
+        val = val.strip()
+        for f2 in fields:
+            if f2 == field:
+                continue
+            idx = val.find(f2)
+            if idx > 0 and idx < 40:
+                val = val[:idx].strip()
+
         result[field] = val
+
     return result
+
+
+# ─── Excel 操作 ───
 
 def create_excel(path, fields):
     wb = openpyxl.Workbook()
@@ -89,6 +188,7 @@ def create_excel(path, fields):
     wb.save(path)
     return path
 
+
 def write_row(excel_path, row_data, field_order, row_num):
     wb = openpyxl.load_workbook(excel_path)
     ws = wb.active
@@ -99,10 +199,12 @@ def write_row(excel_path, row_data, field_order, row_num):
         c = ws.cell(row=row_num, column=i, value=v); c.border = bdr
     wb.save(excel_path)
 
+
 def count_data_rows(excel_path):
     wb = openpyxl.load_workbook(excel_path)
     ws = wb.active
     return max(0, ws.max_row - 1)
+
 
 def get_excel_headers(excel_path):
     """读取 Excel 表头字段（跳过「序号」列）"""
@@ -163,10 +265,9 @@ class App:
         ft.pack(fill=tk.X, pady=(0, 4))
         self.fields_btn = ttk.Button(
             ft, text=f"⚙️ 管理字段（当前 {len(self.fields)} 个）",
-            command=self._manage_fields, width=28
-        )
+            command=self._manage_fields, width=28)
         self.fields_btn.pack(side=tk.LEFT)
-        ttk.Label(ft, text="增删改字段，自定义识别内容；也支持从 Excel 表头同步",
+        ttk.Label(ft, text="增删改字段；可从 Excel 表头同步",
                   foreground="gray").pack(side=tk.LEFT, padx=8)
 
         # ── 图片文件夹 ──
@@ -302,7 +403,7 @@ class App:
             foreground="gray").pack()
         ttk.Label(
             win,
-            text='例如照片上写「采集号：A001」，字段名就写「采集号」',
+            text='例如照片上写「采集号」→ 字段名就写「采集号」',
             foreground="gray").pack(pady=(0, 6))
 
         text = scrolledtext.ScrolledText(win, height=14, font=('微软雅黑', 10))
@@ -468,9 +569,9 @@ class App:
                             0, lambda n=name: self._wl(
                                 f"[监听] 📷 {n}", "ok"))
                         try:
-                            texts = ocr_image(str(img))
-                            if texts:
-                                row_data = parse_fields(texts, fields)
+                            items, raw = ocr_image(str(img))
+                            if items:
+                                row_data = parse_fields(items, raw, fields)
                                 base = count_data_rows(e)
                                 if not os.path.isfile(e):
                                     create_excel(e, fields)
@@ -557,11 +658,11 @@ class App:
                     lc(f"[{idx+1}/{total}] 📷 {name}")
                     pc(idx + 1, total)
                     try:
-                        texts = ocr_image(str(img))
-                        if not texts:
+                        items, raw = ocr_image(str(img))
+                        if not items:
                             lc(f"   ⚠️ 未识别到文字", "w")
                             continue
-                        row_data = parse_fields(texts, fields)
+                        row_data = parse_fields(items, raw, fields)
                         for f in fields:
                             v = row_data.get(f, "") or "（未识别）"
                             lc(f"   · {f} → {v}")
@@ -596,7 +697,6 @@ class App:
         self.root.destroy()
 
     def _on_close(self):
-        """关闭窗口 → 最小化到托盘（或任务栏）"""
         self._save_config()
         self._minimize_to_tray()
 
