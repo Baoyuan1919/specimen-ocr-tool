@@ -95,10 +95,11 @@ def parse_fields(ocr_items, raw_texts, fields):
         val = ""
 
         # 找出字段名在图片中的所有出现位置
+        # 支持精确匹配和前缀匹配（如「科」匹配「科名」）
         field_matches = []
         for txt, x, y, bw in ocr_items:
             t = txt.strip('：: ')
-            if t == field:
+            if t == field or t.startswith(field):
                 field_matches.append((txt, x, y, bw))
 
         if not field_matches:
@@ -139,12 +140,12 @@ def parse_fields(ocr_items, raw_texts, fields):
                 for vt, vx, vy, vbw in ocr_items:
                     t_stripped = vt.strip('：: ')
                     # 跳过字段名自己
-                    if t_stripped == field and abs(vy - fy) < 15:
+                    if (t_stripped == field or t_stripped.startswith(field)) and abs(vy - fy) < 15:
                         continue
                     # 跳过已匹配的其他字段
                     skip = False
                     for ff, (ffx, ffy) in used_positions.items():
-                        if t_stripped == ff and abs(vy - ffy) < 20:
+                        if (t_stripped == ff or t_stripped.startswith(ff)) and abs(vy - ffy) < 20:
                             skip = True
                             break
                     if skip:
