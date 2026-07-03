@@ -837,6 +837,12 @@ class App:
                             lc(f"   ⚠️ 未识别到文字", "w")
                             continue
                         row_data = parse_fields(items, raw, fields)
+                        # 调试：茎叶花果未识别时输出OCR原始文
+                        debug_fields = ['茎','叶','花','果']
+                        missing = [f for f in debug_fields if f in fields and (not row_data.get(f) or row_data.get(f) in ("（未识别）", ""))]
+                        if missing:
+                            debug_txts = [t for t,_,_,_ in items[:40]]
+                            lc(f"   ⚠️ [{','.join(missing)}] 未识别，OCR原文: {' | '.join(debug_txts)}", "w")
                         for f in fields:
                             v = row_data.get(f, "") or "（未识别）"
                             lc(f"   · {f} → {v}")
