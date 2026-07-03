@@ -76,6 +76,34 @@ def ocr_image(img_path):
     return items, raw_texts
 
 
+# 需要严格精确匹配的单字字段（避免误匹配内容中的同字）
+_STRICT_FIELDS = {'茎', '叶', '花', '果', '根', '皮', '枝', '芽'}
+
+
+def _is_field_match(field, txt):
+    """判断 txt 是否匹配字段名 field。
+    规则：
+    - 白名单中的单字字段（茎/叶/花/果等）：必须精确匹配（或紧跟冒号）
+    - 其他字段（包括单字如 科/属）：支持前缀匹配（科→科名）
+    """
+    t = txt.strip('：: ')
+    if not t:
+        return False
+    # 如果有冒号，取冒号前的内容
+    txt_before_colon = txt.split('：')[0].split(':')[0].strip() if '：' in txt or ':' in txt else None
+
+    if field in _STRICT_FIELDS:
+        # 精确匹配白名单字段
+        if txt_before_colon:
+            return txt_before_colon == field
+        return t == field
+    else:
+        # 其他字段：支持前缀匹配
+        if txt_before_colon:
+            return txt_before_colon.startswith(field) or txt_before_colon == field
+        return t.startswith(field) or t == field
+
+
 def parse_fields(ocr_items, raw_texts, fields):
     """
     基于坐标位置的字段匹配，适配表格和标签两种排版。
@@ -86,28 +114,33 @@ def parse_fields(ocr_items, raw_texts, fields):
     3. 全文本正则回退
 
     特点：
-    - 自适应行高容差（基于字段名自身文字高度）
-    - 重复字段仅匹配一次（优先取有冒号的条目）
+    - 单字字段（茎/叶/花/果）仅精确匹配，避免误取内容
+    - 多字字段（科→科名）支持前缀匹配
+    - 重复字段仅匹配一次
     - 值中混入其他字段名时自动截断
     """
     result = {}
     used_positions = {}  # 已匹配的字段名位置，避免重复
+    field_match_log = {}  # 调试：记录匹配了什么
 
     for field in fields:
         val = ""
 
         # 找出字段名在图片中的所有出现位置
-        # 支持精确匹配和前缀匹配（如「科」匹配「科名」）
         field_matches = []
         for txt, x, y, bw in ocr_items:
-            t = txt.strip('：: ')
-            if t == field or t.startswith(field):
+            if _is_field_match(field, txt):
                 field_matches.append((txt, x, y, bw))
 
         if not field_matches:
-            # 字段名在 OCR 结果中完全找不到 → 回退正则
+            # 字段名在 OCR 结果中完全找不到 → 回退到正则
             full = '\n'.join(raw_texts)
-            m = re.search(re.escape(field) + r'[\s]*[:：]\s*([^\n]{1,200})', full)
+            # 支持「科名」匹配字段「科」这种场景
+            m = re.search(r'(?:' + re.escape(field) + r'|' +
+                          re.escape(field) + r'名)' +
+                          r'[\s]*[:：]\s*([^\n]{1,200})', full)
+            if not m:
+                m = re.search(re.escape(field) + r'[\s]*[:：]\s*([^\n]{1,200})', full)
             if m:
                 v = m.group(1).strip().rstrip('，。.;,;）)')
                 if v:
@@ -122,12 +155,14 @@ def parse_fields(ocr_items, raw_texts, fields):
                 if len(parts) > 1 and parts[1].strip():
                     val = parts[1].strip().rstrip('，。.;,;）)')
                     used_positions[field] = (x, y)
+                    field_match_log[field] = f"冒号提取: {txt}"
                     break
             elif ':' in txt:
                 parts = txt.split(':', 1)
                 if len(parts) > 1 and parts[1].strip():
                     val = parts[1].strip().rstrip('，。.;,;）)')
                     used_positions[field] = (x, y)
+                    field_match_log[field] = f"冒号提取: {txt}"
                     break
 
         # ── 策略2：字段名右侧或下方找值（表格+标签排版） ──
@@ -138,40 +173,44 @@ def parse_fields(ocr_items, raw_texts, fields):
                 right_edge = fx + fbw
                 candidates = []
                 for vt, vx, vy, vbw in ocr_items:
-                    t_stripped = vt.strip('：: ')
                     # 跳过字段名自己
-                    if (t_stripped == field or t_stripped.startswith(field)) and abs(vy - fy) < 15:
+                    if _is_field_match(field, vt) and abs(vy - fy) < 15:
                         continue
                     # 跳过已匹配的其他字段
                     skip = False
                     for ff, (ffx, ffy) in used_positions.items():
-                        if (t_stripped == ff or t_stripped.startswith(ff)) and abs(vy - ffy) < 20:
+                        if _is_field_match(ff, vt) and abs(vy - ffy) < 20:
                             skip = True
                             break
                     if skip:
                         continue
-                    # A) 右侧匹配（同行水平带）
+
+                    # A) 右侧匹配（同行水平带，字段名右侧 0~600px）
                     if abs(vy - fy) <= 50:
                         dx = vx - right_edge
                         if -5 < dx < 600:
-                            candidates.append((1, dx, vt))  # 优先1：右侧
-                    # B) 下方匹配（下一行，垂直偏移 20~100px）
+                            candidates.append((1, dx, vt))
+                    # B) 下方匹配（下一行，垂直 20~100px，水平偏移 ±150px）
                     dy = vy - fy
-                    if 20 < dy < 100:
-                        # 也要求水平位置在字段名附近（±150px）
-                        if abs(vx - fx) < 150:
-                            candidates.append((2, dy, vt))  # 优先2：下方
+                    if 20 < dy < 100 and abs(vx - fx) < 150:
+                        dx = vx - fx
+                        if dx > -20:
+                            candidates.append((2, dy, vt))
 
                 if candidates:
-                    candidates.sort(key=lambda c: (c[0], c[1]))  # 先按方向优先级，再按距离
+                    candidates.sort(key=lambda c: (c[0], c[1]))
                     raw_val = candidates[0][2].strip()
                     raw_val = raw_val.split('\n')[0].strip()
-                    raw_val = raw_val.rstrip('，。.;,;）)')
+                    raw_val = raw_val.rstrip('，。.;,;）)').rstrip('：:')
+                    # 如果值中还包含其他字段名，截断
                     for f2 in fields:
                         if f2 == field:
                             continue
+                        # 单字字段要小心（值里可能正好包含这个字）
+                        if len(field) == 1:
+                            continue
                         idx = raw_val.find(f2)
-                        if idx > 5:
+                        if idx > 3:
                             raw_val = raw_val[:idx].strip()
                             break
                     if raw_val:
@@ -179,10 +218,14 @@ def parse_fields(ocr_items, raw_texts, fields):
                         used_positions[field] = (fx, fy)
                         break
 
-        # ── 策略3：全文本正则回退 ──
+        # ── 策略3：全文本正则回退（支持科名→科） ──
         if not val:
             full = '\n'.join(raw_texts)
-            m = re.search(re.escape(field) + r'[\s]*[:：]\s*([^\n]{1,200})', full)
+            m = re.search(r'(?:' + re.escape(field) + r'|' +
+                          re.escape(field) + r'名)' +
+                          r'[\s]*[:：]\s*([^\n]{1,200})', full)
+            if not m:
+                m = re.search(re.escape(field) + r'[\s]*[:：]\s*([^\n]{1,200})', full)
             if m:
                 v = m.group(1).strip().rstrip('，。.;,;）)')
                 if v:
