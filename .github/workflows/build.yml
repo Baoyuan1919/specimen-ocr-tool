@@ -27,8 +27,23 @@ jobs:
       run: python -c "from rapidocr_onnxruntime import RapidOCR; import openpyxl; from PIL import Image; import pystray; print('OK')"
       shell: cmd
 
-    - name: 打包成单文件 EXE
-      run: pyinstaller --onefile --noconsole --name "标本OCR填表工具" main.py
+    - name: 查找 RapidOCR 数据文件目录并复制
+      run: |
+        python -c "
+import rapidocr_onnxruntime, os, shutil
+pkg = os.path.dirname(rapidocr_onnxruntime.__file__)
+out = 'rapidocr_data'
+shutil.copytree(pkg, out, dirs_exist_ok=True)
+for f in os.listdir(out):
+    print(f'  {f}')
+"
+      shell: cmd
+
+    - name: 打包成单文件 EXE（含数据文件）
+      run: |
+        pyinstaller --onefile --noconsole --name "标本OCR填表工具" ^
+          --add-data "rapidocr_data;rapidocr_onnxruntime" ^
+          main.py
       shell: cmd
 
     - name: 检查产物
