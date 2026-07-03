@@ -76,76 +76,105 @@ def ocr_image(img_path):
 
 def parse_fields(ocr_items, raw_texts, fields):
     """
-    基于坐标位置的字段匹配，配合正则回退。
-    两种模式：
-    A) 同水平带右侧匹配（表格排版：「字段名」左 →「值」右）
-    B) 同一行冒号分割（常规排版：「字段名：值」）
-    C) 全文本正则回退
+    基于坐标位置的字段匹配，适配表格和标签两种排版。
+
+    匹配策略（优先级从高到低）：
+    1. 同文本冒号提取：字段名本身包含冒号（如「采集号：629022105203」）
+    2. 坐标邻近匹配：字段名右侧且同一水平区域的内容
+    3. 全文本正则回退
+
+    特点：
+    - 自适应行高容差（基于字段名自身文字高度）
+    - 重复字段仅匹配一次（优先取有冒号的条目）
+    - 值中混入其他字段名时自动截断
     """
     result = {}
+    used_positions = {}  # 已匹配的字段名位置，避免重复
+
     for field in fields:
         val = ""
 
-        # ─── A) 坐标匹配：找字段名右侧最近的内容 ───
-        field_y = None
-        field_right_edge = None
-        field_txt = None
-
+        # 找出字段名在图片中的所有出现位置
+        field_matches = []
         for txt, x, y, bw in ocr_items:
             t = txt.strip('：: ')
             if t == field:
-                field_y = y
-                field_right_edge = x + bw
-                field_txt = txt
-                break
+                field_matches.append((txt, x, y, bw))
 
-        if field_y is not None:
-            # 检查字段名本身是否已包含值（如「采集号：629022105203」）
-            if '：' in field_txt:
-                parts = field_txt.split('：', 1)
+        if not field_matches:
+            # 字段名在 OCR 结果中完全找不到 → 回退正则
+            full = '\n'.join(raw_texts)
+            m = re.search(re.escape(field) + r'[\s]*[:：]\s*([^\n]{1,200})', full)
+            if m:
+                v = m.group(1).strip().rstrip('，。.;,;）)')
+                if v:
+                    val = v
+            result[field] = val
+            continue
+
+        # ── 策略1：看字段名本身是否包含冒号+值 ──
+        for txt, x, y, bw in field_matches:
+            if '：' in txt:
+                parts = txt.split('：', 1)
                 if len(parts) > 1 and parts[1].strip():
-                    val = parts[1].strip()
-                    val = val.rstrip('，。.;,;）)')
-            elif ':' in field_txt:
-                parts = field_txt.split(':', 1)
+                    val = parts[1].strip().rstrip('，。.;,;）)')
+                    used_positions[field] = (x, y)
+                    break
+            elif ':' in txt:
+                parts = txt.split(':', 1)
                 if len(parts) > 1 and parts[1].strip():
-                    val = parts[1].strip()
-                    val = val.rstrip('，。.;,;）)')
+                    val = parts[1].strip().rstrip('，。.;,;）)')
+                    used_positions[field] = (x, y)
+                    break
 
-            if not val:
-                # 在右侧同一水平带找值
-                candidates = []
-                for txt, x, y, bw in ocr_items:
-                    t = t2 = txt.strip('：: ')
-                    # 跳过字段名自己
-                    if t == field:
-                        if abs(y - field_y) < 30:
-                            continue
-                    # 容差 40px 水平带，在字段名右侧 5~500px 内
-                    if abs(y - field_y) < 40:
-                        dx = x - (field_right_edge - 10)
-                        if 0 < dx < 500:
-                            candidates.append((dx, txt))
-
-                candidates.sort(key=lambda c: c[0])
-                if candidates:
-                    raw_val = candidates[0][1].strip()
-                    # 如果取到的值包含换行或过长，截断
-                    val = raw_val.split('\n')[0].split('  ')[0].strip()
-                    val = val.rstrip('，。.;,;）)')
-
-        # ─── B) 正则匹配（同一行冒号格式） ───
+        # ── 策略2：字段名右侧找值（表格排版） ──
         if not val:
-            for txt, x, y, bw in ocr_items:
-                pattern = re.escape(field) + r'[\s]*[:：]\s*([^\n]{1,200})'
-                m = re.search(pattern, txt)
-                if m:
-                    v = m.group(1).strip().rstrip('，。.;,;）)')
-                    if v:
-                        val = v
+            # 遍历每个字段名出现位置，找右侧第一个有效值
+            for txt, fx, fy, fbw in field_matches:
+                if field in used_positions:
+                    continue
+                right_edge = fx + fbw
+                # 自适应行高容差：取字段名高度的一半 + 20px
+                candidates = []
+                for vt, vx, vy, vbw in ocr_items:
+                    t_stripped = vt.strip('：: ')
+                    # 跳过字段名自己
+                    if t_stripped == field and abs(vy - fy) < 15:
+                        continue
+                    # 跳过已匹配的其他字段
+                    skip = False
+                    for ff, (ffx, ffy) in used_positions.items():
+                        if t_stripped == ff and abs(vy - ffy) < 20:
+                            skip = True
+                            break
+                    if skip:
+                        continue
+                    # 同一水平区域（容差 50px，适应不同大小标签）
+                    if abs(vy - fy) <= 50:
+                        dx = vx - right_edge
+                        if -5 < dx < 600:  # 在右侧附近
+                            candidates.append((dx, vt))
+
+                if candidates:
+                    candidates.sort(key=lambda c: c[0])
+                    raw_val = candidates[0][1].strip()
+                    # 截断过长或混入其他字段名的值
+                    raw_val = raw_val.split('\n')[0].strip()
+                    raw_val = raw_val.rstrip('，。.;,;）)')
+                    # 如果值中还包含其他字段名，截断
+                    for f2 in fields:
+                        if f2 == field:
+                            continue
+                        idx = raw_val.find(f2)
+                        if idx > 5:
+                            raw_val = raw_val[:idx].strip()
+                            break
+                    if raw_val:
+                        val = raw_val
+                        used_positions[field] = (fx, fy)
                         break
 
-        # ─── C) 全文本正则回退 ───
+        # ── 策略3：全文本正则回退 ──
         if not val:
             full = '\n'.join(raw_texts)
             m = re.search(re.escape(field) + r'[\s]*[:：]\s*([^\n]{1,200})', full)
@@ -153,15 +182,6 @@ def parse_fields(ocr_items, raw_texts, fields):
                 v = m.group(1).strip().rstrip('，。.;,;）)')
                 if v:
                     val = v
-
-        # 清理：防止抓取了相邻字段名
-        val = val.strip()
-        for f2 in fields:
-            if f2 == field:
-                continue
-            idx = val.find(f2)
-            if idx > 0 and idx < 40:
-                val = val[:idx].strip()
 
         result[field] = val
 
