@@ -102,17 +102,13 @@ def _is_field_match(field, txt):
     if compare == field:
         return True
 
-    # 规则2：单字字段特殊处理
+    # 规则2：单字字段（茎/叶/花/果/根/皮/枝/芽）——仅精确匹配或括号匹配
+    # 注意：不能做 endswith 匹配，否则值文本（如「核果球形」）会被误判为字段「果」
     if field in _STRICT_FIELDS:
         # 含括号的短文本（如「枝（茎）」），查括号内是否含字段名
         if '（' in txt and '）' in txt:
             paren_content = txt[txt.find('（') + 1:txt.find('）')]
             if field in paren_content:
-                return True
-        # 字段名出现在文本末尾（如「花果」→字段「果」）但没有内容描述特征
-        if 2 <= len(compare) <= 4:
-            # 短文本且字段在末尾
-            if compare.endswith(field) and not any(k in compare for k in ['生', '形', '状', '色', '毛']):
                 return True
         return False
 
