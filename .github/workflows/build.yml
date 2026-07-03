@@ -25,15 +25,15 @@ jobs:
       run: python -c "from rapidocr_onnxruntime import RapidOCR; print('OK')"
       shell: cmd
 
-    - name: 打包
+    - name: 打包（onedir + collect-all 含数据文件）
       run: pyinstaller --onedir --noconsole --name "标本OCR填表工具" --collect-all rapidocr_onnxruntime --collect-all openpyxl --collect-all PIL main.py
       shell: cmd
 
-    - name: 验证数据文件
-      run: dir dist\标本OCR填表工具\rapidocr_onnxruntime\
+    - name: 确认 EXE 存在
+      run: dir dist\标本OCR填表工具\标本OCR填表工具.exe
       shell: cmd
 
-    - name: 打包产物
+    - name: 打包成 tar.gz
       run: tar -czf specimen-ocr-tool.tar.gz -C dist 标本OCR填表工具
       shell: cmd
 
