@@ -61,12 +61,12 @@ def parse_fields(texts, fields):
         val = ""
         m = re.search(re.escape(field) + r'[\s]*[:：]\s*([^\n]{1,200})', full)
         if m:
-            v = m.group(1).strip().rstrip('，。.;,;）\)')
+            v = m.group(1).strip().rstrip('，。.;,;）)')
             if v: val = v
         else:
             m = re.search(re.escape(field) + r'[\t ]{1,4}([^\s]{1,100})', full)
             if m:
-                v = m.group(1).strip().rstrip('，。.;,;）\)')
+                v = m.group(1).strip().rstrip('，。.;,;）)')
                 if v: val = v
         result[field] = val
     return result
@@ -129,6 +129,10 @@ class App:
             ctypes.windll.user32.MessageBoxW(0, "需要 tkinter（Windows 自带 Python 已包含）", "错误", 0)
             sys.exit(1)
 
+        self.root = tk.Tk()
+        self.root.title("标本照片 → Excel 自动填表")
+        self.root.withdraw()
+
         self.fields = DEFAULT_FIELDS.copy()
         self.image_folder = tk.StringVar()
         self.excel_path = tk.StringVar()
@@ -140,12 +144,11 @@ class App:
         self._load_config()
         self._build_ui()
 
+        self.root.deiconify()
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self.root.mainloop()
 
     def _build_ui(self):
-        self.root = tk.Tk()
-        self.root.title("标本照片 → Excel 自动填表")
         self.root.geometry("780x680")
         self.root.minsize(640, 520)
 
