@@ -851,13 +851,13 @@ class App:
                                 safe = re.sub(r'[\\/:*?"<>|]', '_', caihao).strip()
                                 if safe:
                                     ext = img.suffix.lower()
-                                    # 处理重复采集号：_01, _02 递增
-                                    new_name = f"{safe}{ext}"
-                                    new_path = img.parent / new_name
+                                    # 所有图片均从 _01 开始编号
                                     counter = 1
-                                    while new_path.exists():
+                                    while True:
                                         new_name = f"{safe}_{counter:02d}{ext}"
                                         new_path = img.parent / new_name
+                                        if not new_path.exists():
+                                            break
                                         counter += 1
                                     img.rename(new_path)
                                     rename_count += 1
