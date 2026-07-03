@@ -1,6 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
-# PyInstaller 打包配置
-# 运行: pyinstaller ocr_excel_tool.spec
+# PyInstaller 打包配置 —— 当前改用命令行打包，此文件保留作参考
 
 import sys
 from pathlib import Path
@@ -13,15 +12,10 @@ a = Analysis(
     binaries=[],
     datas=[],
     hiddenimports=[
-        'paddleocr',
-        'paddle',
-        'paddleocr.ppocr',
-        'paddleocr.ppocr.rec',
-        'paddleocr.ppocr.det',
-        'paddleocr.ppocr.cls',
         'openpyxl',
         'PIL',
         'PIL.ImageTk',
+        'rapidocr_onnxruntime',
     ],
     hookspath=[],
     hooksconfig={},
@@ -42,14 +36,14 @@ exe = EXE(
     a.zipfiles,
     a.datas,
     [],
-    name='OCR填表工具',
+    name='标本OCR填表工具',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
     upx_exclude=[],
     runtime_tmpdir=None,
-    console=False,          # 不显示控制台窗口
+    console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,

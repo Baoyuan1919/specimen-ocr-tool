@@ -2,7 +2,7 @@
 ; 用 Inno Setup 6 编译：ISCC.exe install_script.iss
 
 #define MyAppName "标本OCR填表工具"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "2.0.0"
 #define MyAppPublisher "标本助手"
 #define MyAppExeName "标本OCR填表工具.exe"
 #define MyAppAssocName "标本数据文件"
@@ -21,6 +21,9 @@ SolidCompression=yes
 WizardStyle=modern
 UninstallDisplayIcon={app}\{#MyAppExeName}
 SetupIconFile=app.ico
+; 自动创建桌面快捷方式
+DisableWelcomePage=no
+CloseApplications=yes
 
 [Languages]
 Name: "chinesesimplified"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
