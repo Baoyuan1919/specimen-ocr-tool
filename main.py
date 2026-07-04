@@ -211,16 +211,11 @@ def parse_fields(ocr_items, raw_texts, fields):
 
                     # A) 右侧匹配（同行水平带，字段名右侧 0~600px）
                     # 行间距约23px，容差20px确保只匹配本行不串到下一行
+                    # 注意：仅匹配右侧，不往下找。字段本身空值时保留空白，不取下一行内容
                     if abs(vy - fy) <= 20:
                         dx = vx - right_edge
                         if -5 < dx < 600:
                             candidates.append((1, dx, vt))
-                    # B) 下方匹配（下一行，垂直 20~100px，水平偏移 ±150px）
-                    dy = vy - fy
-                    if 20 < dy < 100 and abs(vx - fx) < 150:
-                        dx = vx - fx
-                        if dx > -20:
-                            candidates.append((2, dy, vt))
 
                 if candidates:
                     candidates.sort(key=lambda c: (c[0], c[1]))
