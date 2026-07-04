@@ -128,6 +128,30 @@ def _is_field_match(field, txt):
     return t.startswith(field) or t == field
 
 
+# OCR 常见识别错误修正表（字段名 → 修正后的值）
+# 格式：{字段名: {错误文本: 正确文本, ...}}
+# 当该字段提取到的值匹配到错误文本时，自动替换为正确文本
+TEXT_CORRECTIONS = {
+    '习性': {'年生草本': '一年生草本'},
+    '果': {'萌果': '蒴果', '萌果无柄': '蒴果无柄'},
+}
+
+
+def _apply_corrections(field: str, value: str) -> str:
+    """对提取的字段值应用已知OCR错误修正"""
+    if not value:
+        return value
+    corrections = TEXT_CORRECTIONS.get(field, {})
+    # 精确匹配优先
+    if value in corrections:
+        return corrections[value]
+    # 简单替换（从左到右，最多替换1次）
+    for wrong, right in corrections.items():
+        if wrong in value:
+            value = value.replace(wrong, right, 1)
+    return value
+
+
 def parse_fields(ocr_items, raw_texts, fields):
     """
     基于坐标位置的字段匹配，适配表格和标签两种排版。
@@ -251,7 +275,7 @@ def parse_fields(ocr_items, raw_texts, fields):
                 if v:
                     val = v
 
-        result[field] = val
+        result[field] = _apply_corrections(field, val)
 
     return result
 
