@@ -210,7 +210,8 @@ def parse_fields(ocr_items, raw_texts, fields):
                         continue
 
                     # A) 右侧匹配（同行水平带，字段名右侧 0~600px）
-                    if abs(vy - fy) <= 50:
+                    # 行间距约23px，容差20px确保只匹配本行不串到下一行
+                    if abs(vy - fy) <= 20:
                         dx = vx - right_edge
                         if -5 < dx < 600:
                             candidates.append((1, dx, vt))
